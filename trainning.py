@@ -65,8 +65,8 @@ if len(questions_idx) != len(answers_idx):
     answers_idx = answers_idx[:1000]
     print(f"Using first 1000 pairs for training.")
 else:
-    questions_idx = questions_idx[:100]
-    answers_idx = answers_idx[:100]
+    questions_idx = questions_idx[:500]
+    answers_idx = answers_idx[:500]
     print(f"Questions and answers are matched: {len(questions_idx)} pairs")
 
 class TextDataset(Dataset):
@@ -88,7 +88,7 @@ print(f": max_seq_len{max_seq_len} ")
 # 初始化数据集和数据加载器
 # 初始化数据集和数据加载器
 dataset = TextDataset(questions_idx, answers_idx, max_seq_len)
-dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
+dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
 
 class TransformerModel(nn.Module):
     def __init__(self, vocab_size, embedding_dim, num_heads, num_layers, hidden_dim, max_seq_len):
@@ -132,7 +132,7 @@ hidden_dim = 256  # 前馈神经网络的隐藏层维度
 model = TransformerModel(vocab_size, embedding_dim, num_heads, num_layers, hidden_dim, max_seq_len)
 criterion = nn.CrossEntropyLoss(ignore_index=word_to_idx['[PAD]'])
 optimizer = optim.Adam(model.parameters(), lr=0.001)
-num_epochs = 100
+num_epochs = 1000
 model.train()
 for epoch in range(num_epochs):
     total_loss = 0

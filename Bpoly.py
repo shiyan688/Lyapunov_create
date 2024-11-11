@@ -187,7 +187,7 @@ def generate_dynamical_system(V, grad_V, orth_vectors):
     生成动力系统方程，使得李雅普诺夫函数 V 是该系统的李雅普诺夫函数。
     """
     n = len(orth_vectors)  # 设置 n 为 orth_vectors 的个数
-    print(n)
+    
     # Step 1: 随机选择 1 <= p <= n，从正交向量中采样 p 个向量
     
     if n > 1:
@@ -195,7 +195,7 @@ def generate_dynamical_system(V, grad_V, orth_vectors):
     else:
     # 处理 n <= 1 的情况，例如设置 p 为一个默认值或引发自定义异常
       p = 1  # 或者其他适合的逻辑
-    print(p)
+    
     sampled_orth_vectors = random.sample(orth_vectors, p)  # 从 orth_vectors 中采样 p 个向量
     
     # Step 2: 随机选择 1 <= k1 <= n，生成 k1 个实值函数 h_i(x)，并将 h_i = 0 对于 k1+1 <= i <= n
@@ -244,33 +244,206 @@ def save_functions_to_file(functions, filename):
         
         f.write(str(functions) + '\n')
     print(f"functions已保存至 {filename}")
-def simplify_expression(expr, threshold=1e-6):
-    """简化表达式，忽略系数小于给定阈值的项"""
-    if isinstance(expr, sp.Matrix):
-        expr = sum(expr)  # 将矩阵元素相加，转换为单一表达式
+import sympy as sp
+
+def to_polish_notation(expr):
+    """
+    将 SymPy 表达式转换为符合指定格式的波兰表示法。
+    """
+    result = []
+    if expr.is_Number:
+        # 处理数字（包括整数和实数）
+        if expr == int(expr):  # 整数
+            num = int(expr)
+            if num >= 0:
+                parts = []
+                while num >= 1000:
+                    parts.append(num % 1000)  # 获取最后 3 位
+                    num //= 1000  # 去掉最后 3 位
+                parts.append(num)  # 最后一组（剩余的部分，可能少于 3 位）
     
-    terms = expr.as_ordered_terms()
-    simplified_terms = []
-    for term in terms:
-        # 将 free_symbols 转换为列表并检查第一个符号
-        free_symbols_list = list(term.free_symbols)
-        if free_symbols_list:  # 确保有自由符号可供处理
-            coeff = term.coeff(free_symbols_list[0])
-            if abs(sp.N(coeff)) > threshold:
-                simplified_terms.append(term)
+    # 返回结果时需要反转，因为我们是从右边开始划分的
+                parts=parts[::-1]
+                for part in parts:
+                    result.append(part)
+
+            else:
+                parts = []
+                result = ["-"]
+                num=abs(num)
+                while num >= 1000:
+                    parts.append(num % 1000)  # 获取最后 3 位
+                    num //= 1000  # 去掉最后 3 位
+                parts.append(num)  # 最后一组（剩余的部分，可能少于 3 位）
     
-    return sum(simplified_terms)
+    # 返回结果时需要反转，因为我们是从右边开始划分的
+                parts=parts[::-1]
+                for part in parts:
+                    result.append(part)
+                
+        else:  # 实数
+    # 将数字转换为科学计数法形式
+            str_num = f"{float(expr):.6e}"
+            coeff = float(str_num.split('e')[0])
+            exp = int(str_num.split('e')[1])
+
+    # 处理小数点位数
+            coeff_str = str(coeff)
+            if '.' in coeff_str:
+        # 获取小数点后的位数
+                decimal_places = len(coeff_str.split('.')[1])
+            else:
+                decimal_places = 0
+
+            if decimal_places < 6:
+        # 如果小数点后位数小于6, 按小数点位数乘以
+                coeff = int(coeff * 10 ** (decimal_places))  # 将尾数乘以10^decimal_places，消除小数点
+                exp -= decimal_places  # 更新指数，减去小数点后的位数
+            else:
+        # 如果小数点后位数大于或等于6，直接乘以10^6
+                coeff = int(coeff * 10 ** 6)
+                exp -= 6
+            # 如果指数为负数，确保格式为 ["-", abs(exp)]
+            
+            if exp < 0:
+                if coeff < 0:
+                    if abs(coeff)<1000:
+                        result = ["-",abs(coeff), "10^", "-", abs(exp)]
+                    else:
+                        a1 = abs(coeff)/1000
+                        a1=int(a1)
+                        a2=abs(coeff)%1000
+                        if a1<1000:
+                            result = ["-",a1,a2, "10^", "-", abs(exp)]
+                        else:
+                            a3 = a1/1000
+                            a3=int(a3)
+                            a1=a1%1000
+                            result = ["-",a3,a1,a2, "10^", "-", abs(exp)]
+                else:                   
+                    if abs(coeff)<1000:
+                        result = [coeff, "10^", abs(exp)]
+                    else:
+                        a1 = abs(coeff)/1000
+                        a1=int(a1)
+                        a2=abs(coeff)%1000
+                        if a1<1000:
+                            result = [a1,a2, "10^", abs(exp)]
+                        else:
+                            a3 = a1/1000
+                            a3=int(a3)
+                            a1=a1%1000
+                            result = [a3,a1,a2, "10^", abs(exp)]                    
+
+            else:
+                if coeff < 0:
+                    if abs(coeff)<1000:
+                        result = ["-",abs(coeff), "10^", exp]
+                    else:
+                        a1 = abs(coeff)/1000
+                        a1=int(a1)
+                        a2=abs(coeff)%1000
+                        if a1<1000:  
+                            result = ["-",a1,a2, "10^", exp]
+                        else:
+                            a3 = a1/1000
+                            a3=int(a3)
+                            a1=a1%1000
+                            result = ["-",a3,a1,a2, "10^", exp]
+                else:
+                    if abs(coeff)<1000:
+                        result = [coeff, "10^", exp]
+                    else:
+                        a1 = abs(coeff)/1000
+                        a1=int(a1)
+                        a2=abs(coeff)%1000
+                        if a1<1000:
+                            result = [a1,a2, "10^", exp]
+                        else:
+                            a3 = a1/1000
+                            a3=int(a3)
+                            a1=a1%1000
+                            result = [a3,a1,a2, "10^", exp]
+    
+    # 处理其他情况
+    elif expr == sp.E:
+        result.append("E")
+    elif expr == sp.pi:
+        result.append("pi")
+    elif expr == sp.I:
+        result.append("i")
+    elif expr.is_Symbol:
+        result.append(str(expr))
+    elif isinstance(expr, sp.Mul):
+        # 如果是乘法，添加 '*'，然后递归处理乘数
+        result.append('*')
+        for arg in expr.args:
+            result.extend(to_polish_notation(arg))
+    elif isinstance(expr, sp.Add):
+        # 如果是加法，添加 '+'，然后递归处理加数
+        result.append('+')
+        for arg in expr.args:
+            result.extend(to_polish_notation(arg))
+    elif isinstance(expr, sp.Pow):
+        # 如果是幂运算，添加 '**'，然后递归处理底数和指数
+        result.append('**')
+        result.extend(to_polish_notation(expr.args[0]))
+        result.extend(to_polish_notation(expr.args[1]))
+    elif expr.func in [sp.sin, sp.cos, sp.tan, sp.log, sp.sqrt, sp.exp]:
+        # 如果是一元运算符（如 sin、cos 等）
+        result.append(str(expr.func))
+        result.extend(to_polish_notation(expr.args[0]))
+    else:
+        raise ValueError(f"无法识别的表达式: {expr}")
+    return result
+
+def save_function_as_polish(expr, filename):
+    """
+    将表达式以前序遍历的Polish表示法保存到文件中，并加上“SEP”分隔符。
+    """
+    polish = to_polish_notation(expr)
+    with open(filename, 'w') as f:
+        f.write("[" + ", ".join(polish) + "]\n")
+    print(f"函数已以Polish表示法保存至 {filename}")
 
 
-n_vars = 2  # 变量数量
-x = sp.symbols(f'x:{n_vars}')
-V = generate_lyapunov_function(n_vars)
-grad_V = compute_gradient(V, x)
-random_vectors = generate_random_vectors(n_vars, 3)
-orth_vectors = gram_schmidt_orthogonalization(grad_V,  random_vectors)
+def save_dynamical_system_as_polish(dynamical_system, filename):
+    """
+    将动力系统的每个方程以Polish表示法保存到文件中，并用SEP分隔。
+    """
+    with open(filename, 'w') as f:
+        for eq in dynamical_system:
+            polish = to_polish_notation(eq)
+            f.write("[" + ", ".join(polish) + "], SEP\n")
+    print(f"动力系统已以Polish表示法保存至 {filename}")
 
-save_vectors_to_file(orth_vectors, "vectors.txt")
-f_system = generate_dynamical_system(V, grad_V, orth_vectors)
-save_functions_to_file(V, "lyapunov_function_test.txt")
 
-save_functions_to_file(f_system, "dynamical_system_test.txt")
+
+for i in range(100000):
+    n_vars = random.randint(2, 3)  # 在 2 到 5 之间生成随机整数
+    x = sp.symbols(f'x:{n_vars}')
+    V, f_system = backward_generation(n_vars)  # 使用随机生成的 n_vars
+   
+    
+
+    # 以 Polish 表示法保存 V 到 lyapunov_function_polish.txt
+    with open("lyapunov_function_polish_poly.txt", 'a') as f:
+        
+        polish = to_polish_notation(V)  # 假设 to_polish_notation 函数已定义
+        polish_str = [str(item) for item in polish]
+        f.write("[" + ", ".join(polish_str) + ", ]\n")
+        
+    
+    # 以 Polish 表示法保存 f_system 到 dynamical_system_polish.txt
+    with open("dynamical_system_polish_poly.txt", 'a') as f:
+        
+        f.write("[")
+        for eq in f_system:
+            polish = to_polish_notation(eq)  # 假设 to_polish_notation 函数已定义
+            polish_str = [str(item) for item in polish]
+            f.write( ", ".join(polish_str) + ", "+" SEP"+ ", ")
+        f.write("]\n")
+        
+    
+    print(f"Iteration {i+1} saved, n_vars = {n_vars}")
+    
