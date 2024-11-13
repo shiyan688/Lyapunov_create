@@ -1,372 +1,177 @@
-import numpy as np
-import sympy as sp
-import random  
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, Dataset
+import random
+import ast
+from torch.nn.utils.rnn import pad_sequence
+class TextDataset(Dataset):
+    def __init__(self, questions_idx, answers_idx, max_len):
+        self.questions = [q + [word_to_idx['[PAD]']] * (max_len - len(q)) for q in questions_idx]
+        self.answers = [a + [word_to_idx['[PAD]']] * (max_len - len(a)) for a in answers_idx]
+
+    def __len__(self):
+        return len(self.questions)
+
+    def __getitem__(self, idx):
+        src = torch.tensor(self.questions[idx], dtype=torch.long)  # 问题输入
+        tgt = torch.tensor(self.answers[idx], dtype=torch.long)    # 答案输出
+        return src, tgt
 
 
-# 定义可用的二元和一元运算符
-binary_operators = ['+', '-', '*', '/', '**']  # 二元运算符
-unary_operators = ['exp', 'log', 'sqrt', 'sin', 'cos', 'tan']  # 一元运算符
-def generate_random_leaf(variables):
-    """
-    随机生成叶子节点，可以是变量或整数。
-    """
-    if random.random() < 0.75:
-        return random.choice(variables)  # 变量
-    else:
-        return sp.Integer(random.randint(1, 10))  # 随机整数
+# 初始化数据集和数
+class TransformerModel(nn.Module):
+    def __init__(self, vocab_size, embedding_dim, num_heads, num_layers, hidden_dim, max_seq_len):
+        super(TransformerModel, self).__init__()
+        self.embedding = nn.Embedding(vocab_size, embedding_dim)
+        self.pos_encoder = nn.Parameter(torch.zeros(1, max_seq_len, embedding_dim))
+        self.transformer = nn.Transformer(
+            d_model=embedding_dim,
+            nhead=num_heads,
+            num_encoder_layers=num_layers,
+            num_decoder_layers=num_layers,
+            dim_feedforward=hidden_dim,
+            batch_first=False
+        )
+        self.fc_out = nn.Linear(embedding_dim, vocab_size)
 
-def generate_random_function(variables, depth=2):
-    """
-    递归生成随机函数，并确保生成的函数不包含复数或无穷大。
-    
-    参数：
-    - variables: 符号变量列表
-    - depth: 当前递归深度，用于控制树的高度
-    """
-    while True:
-        # 生成随机函数
-        if depth == 0:
-            expr = generate_random_leaf(variables)
-        else:
-            if random.random() < 0.5:
-                # 生成二元运算符
-                operator = random.choice(binary_operators)
-                left = generate_random_function(variables, depth - 1)
-                right = generate_random_function(variables, depth - 1)
-                expr = sp.sympify(f"({left}) {operator} ({right})")
-            else:
-                # 生成一元运算符
-                operator = random.choice(unary_operators)
-                operand = generate_random_function(variables, depth - 1)
-                expr = sp.sympify(f"{operator}({operand})")
-
-        # 检查是否包含复数或无穷大
-        if expr.has(sp.oo) or expr.has(-sp.oo) or expr.has(sp.I) or expr.has(sp.zoo) or expr.has(-sp.nan):
-            print("Detected invalid expression (complex or infinity), regenerating...")
-            continue  # 如果包含无穷大或复数，则重新生成表达式
-        else:
-            return expr  # 如果没有无穷大或复数，返回生成的表达式
-
-# 生成多项式函数
-def generate_random_polynomial(variables, num_terms=3, coeff_range=(-10, 10), power_range=(1, 3)):
-    """
-    生成一个随机多项式，由多个随机单项式组成。
-    
-    参数：
-    - variables: 符号变量列表（多项式的变量）
-    - num_terms: 多项式中包含的单项式的数量
-    - coeff_range: 系数的范围，默认在 -10 到 10 之间
-    - power_range: 幂次的范围，默认在 1 到 3 之间
-    
-    返回：
-    - 随机生成的多项式
-    """
-    polynomial = 0
-    for _ in range(num_terms):
-        coeff = random.randint(*coeff_range)
-        term = coeff
-        for var in variables:
-            power = random.randint(*power_range)
-            term *= var**power
-        polynomial += term
-    
-    return polynomial
-def generate_random_positive_definite_matrix(n):
-    """
-    生成一个随机正定矩阵，可以设置一定概率为对角矩阵。
-    """
-    # 生成随机矩阵
-    A = np.random.rand(n, n)
-    A = np.dot(A, A.transpose())  # 确保正定矩阵
-    
-    # 随机决定是否为对角矩阵
-    if random.random() < 0.5:
-        A = np.diag(np.diag(A))
-    
-    return A
-# Step 1: 生成李雅普诺夫函数
-def generate_lyapunov_function(n_vars, depth=3):
-    """
-    随机生成一个满足要求且不包含复数和无穷大的李雅普诺夫函数 V = V_cross + V_proper。
-    
-    参数：
-    - n_vars: 变量数量
-    - depth: 随机生成函数的深度
-    """
-    while True:
-        # 生成符号变量
-        x = sp.symbols(f'x:{n_vars}')
+    def forward(self, src, tgt):
+        src = self.embedding(src) + self.pos_encoder[:, :src.size(1), :]
+        tgt = self.embedding(tgt) + self.pos_encoder[:, :tgt.size(1), :]
         
-        # 生成 V_cross，V_cross(x) = sum(pi(x)^2) 形式，其中 pi(x) 是随机函数
-        V_cross = 0
-        for i in range(n_vars):
-            pi = generate_random_function(list(x), depth=depth)  # 生成随机函数 pi(x)
-            V_cross += pi**2  # V_cross 是若干项 pi(x)^2 的和
-        
-        # 生成正定矩阵 A，用于构造 V_proper
-        A = generate_random_positive_definite_matrix(n_vars)
-        beta = [random.randint(1, 3) for _ in range(n_vars)]
-        # 生成 V_proper，正定函数
-        V_proper = 0
-        for i in range(n_vars):
-            for j in range(n_vars):
-                alpha_ij = A[i, j]  # 从正定矩阵中获取 alpha_ij
-                beta_i = random.randint(1, n_vars)
-                beta_j = random.randint(1, n_vars)
-                V_proper += alpha_ij * (x[i]**beta[i]) * (x[j]**beta[j])
-        
-        # 生成李雅普诺夫函数 V
-        V = V_cross + V_proper
-        
-        # 检查 V 是否包含复数或无穷大
-        if V.has(sp.I) or V.has(sp.oo) or V.has(-sp.oo) or V.has(-sp.nan):
-            print("Detected invalid expression (complex or infinity), regenerating...")
-            continue  # 如果包含复数或无穷大，重新生成
-        
-        # 如果 V 符合要求，则返回
-        return V
+        src = src.transpose(0, 1)
+        tgt = tgt.transpose(0, 1)
 
-# Step 2: 计算梯度 ∇V 以及随机符号化向量
-def compute_gradient(V, x):
-    """
-    计算李雅普诺夫函数 V(x) 的梯度。
-    """
-    grad_V = sp.Matrix([sp.diff(V, xi) for xi in x])
-    error = 0
-    if any(element.has(sp.nan) or element.has(-sp.oo) for element in grad_V):
-        error = 1  # 如果包含无穷大或负无穷大，则设置 error = 1
-    return grad_V,error
-def generate_random_vectors(n_vars, num_vectors):
-    """
-    生成一组非零的随机符号向量。
-    
-    参数：
-    - n_vars: 符号向量中的变量数
-    - num_vectors: 生成的符号向量数
-    """
-    vectors = []
-    x = sp.symbols(f'x:{n_vars}')  # 定义符号变量
-    
-    for _ in range(num_vectors):
-        while True:
-            # 生成一个随机符号向量
-            vec = sp.Matrix([sp.Rational(random.randint(1, 10), 1) * x[i] for i in range(n_vars)])
+        output = self.transformer(src, tgt)
+        
+        output = output.transpose(0, 1)
+        output = self.fc_out(output)
+        return output
+# 假设所有需要的模块和模型定义已经在主训练代码中实现和导入。
+# TransformerModel, TextDataset 等模块和定义不再重复定义。
+
+checkpoint = torch.load('transformer_polish_model3.pth')
+vocab = checkpoint['vocab']
+saved_max_seq_len = checkpoint['max_seq_len']
+
+# 确保 [UNK] 和 [PAD] 在词汇中
+if '[UNK]' not in vocab:
+    vocab.add('[UNK]')
+if '[PAD]' not in vocab:
+    vocab.add('[PAD]')
+
+# 创建词汇到索引和索引到词汇的映射
+word_to_idx = {word: idx for idx, word in enumerate(vocab)}
+idx_to_word = {idx: word for word, idx in word_to_idx.items()}
+
+# 读取测试集数据
+with open('dynamical_system_polish.txt', 'r') as f:
+    test_question_lines = f.readlines()[:1000]
+
+with open('lyapunov_function_polish.txt', 'r') as f:
+    test_answer_lines = f.readlines()[:1000]
+
+# 将测试数据转换为索引
+test_questions_idx = []
+test_answers_idx = []
+
+for line in test_question_lines:
+    line = line.strip('[]').strip()
+    line_tokens = line.split(', ')
+    idxs = [word_to_idx.get(token.strip(), word_to_idx['[UNK]']) for token in line_tokens]
+    test_questions_idx.append(torch.tensor(idxs, dtype=torch.long))
+
+for line in test_answer_lines:
+    line = line.strip('[]').strip()
+    line_tokens = line.split(', ')
+    idxs = [word_to_idx.get(token.strip(), word_to_idx['[UNK]']) for token in line_tokens]
+    test_answers_idx.append(torch.tensor(idxs, dtype=torch.long))
+
+# 计算最大序列长度
+max_seq_len = max(max(len(seq) for seq in test_questions_idx), max(len(seq) for seq in test_answers_idx))
+
+# 从checkpoint中加载模型并获取max_seq_len
+
+# 初始化模型
+vocab_size = len(vocab)
+embedding_dim = 256
+num_heads = 8
+num_layers = 2
+hidden_dim = 256
+
+model = TransformerModel(vocab_size, embedding_dim, num_heads, num_layers, hidden_dim, saved_max_seq_len)
+model.load_state_dict(checkpoint['model_state_dict'])
+model = model.cuda()
+model.eval()
+
+# 定义填充函数
+def collate_fn(batch):
+    src_batch, tgt_batch = zip(*batch)
+    src_batch = pad_sequence(src_batch, batch_first=True, padding_value=word_to_idx['[PAD]'])
+    tgt_batch = pad_sequence(tgt_batch, batch_first=True, padding_value=word_to_idx['[PAD]'])
+    return src_batch, tgt_batch
+
+# 初始化测试数据集和数据加载器
+class TextDataset(Dataset):
+    def __init__(self, questions, answers):
+        self.questions = questions
+        self.answers = answers
+
+    def __len__(self):
+        return len(self.questions)
+
+    def __getitem__(self, idx):
+        return self.questions[idx], self.answers[idx]
+
+test_dataset = TextDataset(test_questions_idx, test_answers_idx)
+test_dataloader = DataLoader(test_dataset, batch_size=128, shuffle=False, collate_fn=collate_fn)
+
+# 损失函数
+criterion = nn.CrossEntropyLoss(ignore_index=word_to_idx['[PAD]'])
+
+# 在测试集上评估模型
+total_test_loss = 0
+with torch.no_grad():
+    for src, tgt in test_dataloader:
+        src, tgt = src.cuda(), tgt.cuda()
+        output = model(src, tgt[:, :-1])
+        output = output.view(-1, vocab_size)
+        tgt = tgt[:, 1:].contiguous().view(-1)
+        
+        loss = criterion(output, tgt)
+        total_test_loss += loss.item()
+
+print(f"Test Loss: {total_test_loss / len(test_dataloader)}")
+
+# 从测试集生成答案
+def generate_answer(model, test_src):
+    # 初始化目标序列为空
+    generated_tokens = []
+    tgt = torch.tensor([word_to_idx['[PAD]']]).unsqueeze(0).cuda()
+
+    # 开始生成答案
+    with torch.no_grad():
+        for _ in range(saved_max_seq_len):
+            # 模型前向推理
+            output = model(test_src, tgt)
+            next_token = output[:, -1, :].argmax(dim=-1)  # 获取最大概率的下一个词
+            generated_tokens.append(next_token.item())
             
-            # 检查向量是否全为零
-            if any(element != 0 for element in vec):
-                vectors.append(vec)
-                break  # 跳出循环，继续生成下一个向量
-                
-    return vectors
-# Step 3: 使用格拉姆-施密特正交化方法生成与梯度超平面正交的基向量
-def project(u, v):
-    """将向量 v 投影到向量 u 上，返回投影结果"""
-    if u.norm() == 0 or v.norm() == 0:
-        print("遇到零向量，无法进行投影，跳过此投影。")
-        return sp.zeros(u.shape[0], 1)  # 返回一个零向量以避免 NaN
-    try:
-        projection = (v.T * u / (u.T * u)[0])[0] * u
-    except ZeroDivisionError:
-        print("遇到除以零的情况，跳过此投影。")
-        projection = sp.zeros(u.shape[0], 1)
-    return projection
-
-def gram_schmidt_orthogonalization(grad_V, vectors):
-    """
-    使用格拉姆-施密特正交化方法，生成与梯度超平面正交的基向量。
-    """
-    def project(u, v):
-        if u.norm() == 0 or v.norm() == 0:
-            return sp.zeros(u.shape[0], 1)
-        return (v.T * u / (u.T * u)[0])[0] * u
-
-    orthogonal_vectors = []
-    for v in vectors:
-        for u in orthogonal_vectors:
+            # 如果生成了结束标记，停止生成
+            if next_token.item() == word_to_idx['[PAD]']:
+                break
             
-            v = v - project(u, v)
-            
-            
-        # 使当前向量与梯度正交
-        
-        v = v - project(grad_V, v)
-        
-        # 检查是否产生了 NaN 值
-        if any([elem.has(sp.nan) for elem in v]):
-            print("发现 NaN 值，跳过此向量。")
-            continue
-        
-        orthogonal_vectors.append(v)
-    
-    return orthogonal_vectors
+            # 更新目标序列
+            tgt = torch.cat((tgt, next_token.unsqueeze(0)), dim=1)
 
-# Step 4: 采样
+    # 将生成的索引转换为单词
+    generated_answer = [idx_to_word[idx] for idx in generated_tokens]
+    return " ".join(generated_answer)
 
-# Step 4: 生成动力系统 f(x)
-def generate_dynamical_system(V, grad_V, orth_vectors):
-    """
-    生成动力系统方程，使得李雅普诺夫函数 V 是该系统的李雅普诺夫函数。
-    """
-    n = len(grad_V)
-    # Step 1: 随机选择 1 <= p <= n，从正交向量中采样 p 个向量
-    p = random.randint(1, n - 1)  # 随机选择 p 的值
-    sampled_orth_vectors = random.sample(orth_vectors, p)  # 从 orth_vectors 中采样 p 个向量
-    
-    # Step 2: 随机选择 1 <= k1 <= n，生成 k1 个实值函数 h_i(x)，并将 h_i = 0 对于 k1+1 <= i <= n
-    k1 = random.randint(1, n)  # 随机选择 k1 的值
-    h_functions = [generate_random_function(list(sp.symbols(f'x:{n}'))) for _ in range(k1)]  # 生成 k1 个实值函数
-    h_functions += [sp.Integer(0) for _ in range(k1, n)]  # 对于 k1+1 <= i <= n，设置 h_i = 0
-    
-    # 动力系统方程的第一部分：-h(x)^2 * ∇V(x)
-    h_squared = sum(h_i**2 for h_i in h_functions)  # 将 h(x) 的各元素平方相加
-    f_grad = -h_squared * grad_V  # 生成动力系统的梯度项
-    # Step 3: 生成 g_i(x) * e^i(x) 的部分
-    g_functions = [generate_random_function(list(sp.symbols(f'x:{n}'))) for _ in range(p)]
-    f_orth = sp.zeros(n, 1)
-    for i in range(p):
-        f_orth += g_functions[i] * sampled_orth_vectors[i]  
-    # 返回动力系统的最终方程
-    return f_grad + f_orth
+# 从测试集中随机选择一个样本进行推理
 
-# 主函数：反向生成动力系统和李雅普诺夫函数
-def backward_generation(n_vars):
-    """
-    生成李雅普诺夫函数及对应的动力系统。
-    如果梯度包含无穷大（error=1），则重新运行生成过程。
-    """
-    while True:
-        # 定义符号变量
-        x = sp.symbols(f'x:{n_vars}')
-        
-        # 生成李雅普诺夫函数 V
-        V = generate_lyapunov_function(n_vars, depth=2)
-        
-        # 计算梯度并检查 error
-        grad_V, error = compute_gradient(V, x)
-        
-        # 如果 error 为 1，表示梯度包含无穷大，重新运行函数
-        if error == 1:
-            print("Error: 梯度包含无穷大，重新生成...")
-            continue  # 回到循环开头重新生成
-        
-        # 如果没有错误，跳出循环并继续生成其他内容
-        random_vectors = generate_random_vectors(n_vars, n_vars - 1)
-        orth_vectors = gram_schmidt_orthogonalization(grad_V, random_vectors)
-        f_system = generate_dynamical_system(V, grad_V, orth_vectors)
-        
-        return V, f_system  # 返回生成的李雅普诺夫函数和动力系统
-
-def save_vectors_to_file(vectors, filename):
-    """
-    将生成的向量写入到txt文件中。
-    
-    参数：
-    - vectors: 要保存的向量列表
-    - filename: 保存的文件名
-    """
-    with open(filename, 'w') as f:
-        for vec in vectors:
-            f.write(str(vec) + '\n')
-    print(f"向量已保存至 {filename}")
-def save_functions_to_file(functions, filename):
-    
-    with open(filename, 'w') as f:
-        
-        f.write(str(functions) + '\n')
-    print(f"functions已保存至 {filename}")
-def to_polish_notation(expr):
-    """
-    将 SymPy 表达式转换为前序遍历的标记序列。
-    """
-    result = []
-    if expr.is_Number:
-        # 如果是数字，格式化输出（科学记数法）
-        result.append(f"{float(expr):.1e}")
-    elif expr == sp.E:
-        # 自然对数基数 e 的特殊处理
-        result.append("E")
-    elif expr == sp.pi:
-        # 圆周率 π 的特殊处理
-        result.append("pi")
-    elif expr == sp.I:
-        # 复数单位 i 的特殊处理
-        result.append("i")
-    elif expr.is_Symbol:
-        # 如果是变量，直接添加
-        result.append(str(expr))
-    elif isinstance(expr, sp.Mul):
-        # 如果是乘法，添加 '*'，然后递归处理乘数
-        result.append('*')
-        for arg in expr.args:
-            result.extend(to_polish_notation(arg))
-    elif isinstance(expr, sp.Add):
-        # 如果是加法，添加 '+'，然后递归处理加数
-        result.append('+')
-        for arg in expr.args:
-            result.extend(to_polish_notation(arg))
-    elif isinstance(expr, sp.Pow):
-        # 如果是幂运算，添加 '**'，然后递归处理底数和指数
-        result.append('**')
-        result.extend(to_polish_notation(expr.args[0]))
-        result.extend(to_polish_notation(expr.args[1]))
-    elif expr.func in [sp.sin, sp.cos, sp.tan, sp.log, sp.sqrt, sp.exp]:
-        # 如果是一元运算符（如 sin、cos 等）
-        result.append(str(expr.func))
-        result.extend(to_polish_notation(expr.args[0]))
-    else:
-        raise ValueError(f"无法识别的表达式: {expr}")
-    return result
-
-def save_function_as_polish(expr, filename):
-    """
-    将表达式以前序遍历的Polish表示法保存到文件中。
-    """
-    polish = to_polish_notation(expr)
-    with open(filename, 'w') as f:
-        f.write("[" + ", ".join(polish) + "]\n")
-    print(f"函数已以Polish表示法保存至 {filename}")
-
-def save_dynamical_system_as_polish(dynamical_system, filename):
-    """
-    将动力系统的每个方程以Polish表示法保存到文件中，并用SEP分隔。
-    """
-    with open(filename, 'w') as f:
-        for eq in dynamical_system:
-            polish = to_polish_notation(eq)
-            f.write("[" + ", ".join(polish) + "], SEP\n")
-    print(f"动力系统已以Polish表示法保存至 {filename}")
-
-n_vars=3
-x = sp.symbols(f'x:{n_vars}')
-for i in range(10000):
-    n_vars = random.randint(2, 3)  # 在 2 到 5 之间生成随机整数
-    
-    V, f_system = backward_generation(n_vars)  # 使用随机生成的 n_vars
-    with open("lyapunov_function.txt", 'a') as f:
-        f.write(f"Iteration {i+1}, n_vars = {n_vars}\n")
-        f.write(str(V) + "\n")
-        f.write("-" * 40 + "\n")
-    
-    # 将 f_system 保存到 dynamical_system.txt
-    with open("dynamical_system.txt", 'a') as f:
-        f.write(f"Iteration {i+1}, n_vars = {n_vars}\n")
-        f.write(str(f_system) + "\n")
-        f.write("-" * 40 + "\n")
-    
-    # 以 Polish 表示法保存 V 到 lyapunov_function_polish.txt
-    with open("lyapunov_function_polish.txt", 'a') as f:
-        f.write(f"Iteration {i+1}, n_vars = {n_vars}\n")
-        polish = to_polish_notation(V)  # 假设 to_polish_notation 函数已定义
-        f.write("[" + ", ".join(polish) + "]\n")
-        f.write("-" * 40 + "\n")
-    
-    # 以 Polish 表示法保存 f_system 到 dynamical_system_polish.txt
-    with open("dynamical_system_polish.txt", 'a') as f:
-        f.write(f"Iteration {i+1}, n_vars = {n_vars}\n")
-        for eq in f_system:
-            polish = to_polish_notation(eq)  # 假设 to_polish_notation 函数已定义
-            f.write("[" + ", ".join(polish) + "], SEP\n")
-        f.write("-" * 40 + "\n")
-    
-    print(f"Iteration {i+1} saved, n_vars = {n_vars}")
-    
+random_idx = random.randint(0, len(test_questions_idx) - 1)
+test_src = pad_sequence([test_questions_idx[random_idx]], batch_first=True, padding_value=word_to_idx['[PAD]']).cuda()
+original_question = " ".join([idx_to_word[idx.item()] for idx in test_questions_idx[random_idx]])
+generated_answer = generate_answer(model, test_src)
+print("Original Question:", original_question)
+print("Generated Answer:", generated_answer)
