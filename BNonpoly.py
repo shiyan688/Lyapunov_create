@@ -1,7 +1,7 @@
 import numpy as np
 import sympy as sp
 import random  
-import multiprocessing
+
 
 # 定义可用的二元和一元运算符
 binary_operators = ['+', '-', '*', '/', '**']  # 二元运算符
@@ -33,9 +33,6 @@ def generate_random_function(variables, depth=2):
                 operator = random.choice(binary_operators)
                 left = generate_random_function(variables, depth - 1)
                 right = generate_random_function(variables, depth - 1)
-                # 防止除以零
-                if operator == '/' and right == 0:
-                    continue
                 expr = sp.sympify(f"({left}) {operator} ({right})")
             else:
                 # 生成一元运算符
@@ -165,25 +162,25 @@ def generate_random_vectors(n_vars, num_vectors):
     return vectors
 # Step 3: 使用格拉姆-施密特正交化方法生成与梯度超平面正交的基向量
 def project(u, v):
-        """将向量 v 投影到向量 u 上"""
-        
-
-        # 计算 u 的长度平方
-        u_norm_squared =u.dot(u)
-
-        # 计算 v 在 u 上的投影系数
-        projection_coefficient = u.dot(v) / u_norm_squared
-
-        # 计算投影向量
-        projection_vector = projection_coefficient * u # 返回投影向量
-
-        return projection_vector
+    """将向量 v 投影到向量 u 上，返回投影结果"""
+    if u.norm() == 0 or v.norm() == 0:
+        print("遇到零向量，无法进行投影，跳过此投影。")
+        return sp.zeros(u.shape[0], 1)  # 返回一个零向量以避免 NaN
+    try:
+        projection = (v.T * u / (u.T * u)[0])[0] * u
+    except ZeroDivisionError:
+        print("遇到除以零的情况，跳过此投影。")
+        projection = sp.zeros(u.shape[0], 1)
+    return projection
 
 def gram_schmidt_orthogonalization(grad_V, vectors):
     """
     使用格拉姆-施密特正交化方法，生成与梯度超平面正交的基向量。
     """
-    
+    def project(u, v):
+        if u.norm() == 0 or v.norm() == 0:
+            return sp.zeros(u.shape[0], 1)
+        return (v.T * u / (u.T * u)[0])[0] * u
 
     orthogonal_vectors = []
     for v in vectors:
@@ -406,7 +403,7 @@ def to_polish_notation(expr):
     elif expr.is_Symbol:
         result.append(str(expr))
     elif isinstance(expr, sp.Mul):
-        # 如果是乘法，添加 '*'，然后递归处理乘数
+            # 如果是乘法，添加 '*'，然后递归处理乘数
         result.append('*')
         result.extend(to_polish_notation(expr.args[0]))
         remaining_sum = sp.Mul(*expr.args[1:])
@@ -455,7 +452,7 @@ def save_dynamical_system_as_polish(dynamical_system, filename):
 lyapunov_buffer = []
 dynamical_system_buffer = []
 
-for j in range(2):
+for j in range(1000):
     for i in range(1000):
         n_vars = random.randint(2, 3)  # 在 2 到 5 之间生成随机整数
         x = sp.symbols(f'x:{n_vars}')
@@ -476,7 +473,7 @@ for j in range(2):
         dynamical_system_buffer.append(dynamical_str)
 
         # 每 100 次写入一次文件
-        if (i + 1) % 200 == 0:
+        if (i + 1) % 500 == 0:
             with open("lyapunov_function_polish.txt", 'a') as f:
                 f.writelines(lyapunov_buffer)
             with open("dynamical_system_polish.txt", 'a') as f:

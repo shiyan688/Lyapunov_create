@@ -1,9 +1,9 @@
-
-
+import logging
 import numpy as np
 import sympy as sp
 import random  
 from mpmath import mp
+logging.basicConfig(filename='debug.log', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 mp.dps = 50  # 设置为 50 位有效数字
 
@@ -14,10 +14,14 @@ def generate_random_leaf(variables):
     """
     随机生成叶子节点，可以是变量或整数。
     """
-    if random.random() < 0.6:
-        return random.choice(variables)  # 变量
+    if random.random() < 0.7:
+        leaf = random.choice(variables)
+        
+        return leaf  # 变量
     else:
-        return sp.Integer(random.randint(1, 10))  # 随机整数
+        leaf = sp.Integer(random.randint(1, 10))
+        
+        return leaf  # 随机整数
 
 def generate_random_function(variables, depth=2):
     """
@@ -46,11 +50,14 @@ def generate_random_function(variables, depth=2):
 
         # 检查是否包含复数或无穷大
         if expr.has(sp.oo) or expr.has(-sp.oo) or expr.has(sp.I) or expr.has(sp.zoo) or expr.has(-sp.nan) or expr.has(sp.S.Zero):
-            print("Detected invalid expression (complex or infinity), regenerating...")
+            logging.warning(f"Invalid expression detected (complex or infinity): {expr}, regenerating...")
             continue  # 如果包含无穷大或复数，则重新生成表达式
+        elif expr.is_number:
+            logging.warning(f"Generated a concrete number expression, regenerating: {expr}")
+            continue  # 如果生成了一个具体的数，重新生成表达式
         else:
+            logging.debug(f"Generated valid random function: {expr}")
             return expr  # 如果没有无穷大或复数，返回生成的表达式
-# 生成多项式函数
 def generate_random_polynomial(variables, num_terms=2, coeff_range=(0, 5), power_range=(1, 3)):
     """
     生成一个随机多项式，由多个随机单项式组成。
@@ -88,37 +95,33 @@ def generate_random_positive_definite_matrix(n):
     
     return A
 # Step 1: 生成李雅普诺夫函数
-def generate_lyapunov_function(n_vars, depth=3):
+def generate_lyapunov_function(n_vars,x, depth=3):
     """
     随机生成一个满足要求的李雅普诺夫函数 V = V_cross + V_proper。
-    
-    V_cross 是若干项 pi(x)^2 的和，满足 V_cross(0) = 0。
-    V_proper 是一个给定的正定函数。
-    
-    参数：
-    - n_vars: 变量数量
-    - depth: 随机生成函数的深度
     """
     # 生成符号变量
-    x = sp.symbols(f'x:{n_vars}')
     
+
     # 生成 V_cross，V_cross(x) = sum(pi(x)^2) 形式，其中 pi(x) 是随机函数
     V_cross = 0
     for i in range(n_vars):
-        pi = generate_random_polynomial(list(x))  # 生成随机函数 pi(x)
-        V_cross += pi**2  # V_cross 是若干项 pi(x)^2 的和
-    A = generate_random_positive_definite_matrix(n_vars)
+        pi = generate_random_polynomial(list(x))
+        V_cross += pi**2
+    logging.debug(f"Generated V_cross part of Lyapunov function: {V_cross}")
+
     # 生成 V_proper，正定函数
+    A = generate_random_positive_definite_matrix(n_vars)
     V_proper = 0
     beta = [random.randint(1, 3) for _ in range(n_vars)]
     for i in range(n_vars):
         for j in range(n_vars):
-            alpha_ij = A[i, j]  # 从正定矩阵中获取 alpha_ij
-            
+            alpha_ij = A[i, j]
             V_proper += alpha_ij * (x[i]**beta[i]) * (x[j]**beta[j])
-    V=V_cross + V_proper
-    V=sp.sympify(V)
-    # 返回 V = V_cross + V_proper
+    logging.debug(f"Generated V_proper part of Lyapunov function: {V_proper}")
+
+    V = V_cross + V_proper
+    logging.info(f"Generated Lyapunov function: {V}")
+
     return V
 
 # Step 2: 计算梯度 ∇V 以及随机符号化向量
@@ -128,8 +131,9 @@ def compute_gradient(V, x):
     """
     grad_V = sp.Matrix([sp.diff(V, xi) for xi in x])
     grad_V = sp.simplify(grad_V)  # 简化梯度表达式
+    logging.info(f"Generated grad: {grad_V}")
     return grad_V
-def generate_random_vectors(n_vars, num_vectors):
+def generate_random_vectors(n_vars, num_vectors,x):
     """
     生成一组随机的符号向量。
     """
@@ -154,7 +158,7 @@ def gram_schmidt_orthogonalization(grad_V, vectors):
 
         # 计算投影向量
         projection_vector = projection_coefficient * u # 返回投影向量
-
+        projection_vector = sp.simplify(projection_vector)  # 简化投影向量
         return projection_vector
 
     orthogonal_vectors = []
@@ -163,10 +167,10 @@ def gram_schmidt_orthogonalization(grad_V, vectors):
         
         # 使当前向量与梯度正交
         v = v - project(grad_V, v)
-        
+        v=sp.simplify(v)
        
         orthogonal_vectors.append(v)
-    
+      
     return orthogonal_vectors
 # Step 4: 采样
 def check_f_orthogonality(grad_V, f_orth):
@@ -186,7 +190,7 @@ def check_f_orthogonality(grad_V, f_orth):
         return False
 
 # Step 4: 生成动力系统 f(x)
-def generate_dynamical_system(V, grad_V, orth_vectors):
+def generate_dynamical_system(V, grad_V, orth_vectors,x,n_vars):
     """
     生成动力系统方程，使得李雅普诺夫函数 V 是该系统的李雅普诺夫函数。
     """
@@ -209,13 +213,15 @@ def generate_dynamical_system(V, grad_V, orth_vectors):
     
     # 动力系统方程的第一部分：-h(x)^2 * ∇V(x)
     h_squared = sum(h_i**2 for h_i in h_functions)  # 将 h(x) 的各元素平方相加
+    h_squared = sp.simplify(h_squared)  # 简化 h_squared 的表达式
     f_grad = -h_squared * grad_V  # 生成动力系统的梯度项
     # Step 3: 生成 g_i(x) * e^i(x) 的部分
     g_functions = [generate_random_function(list(sp.symbols(f'x:{n}'))) for _ in range(p)]
     f_orth = sp.zeros(n_vars, 1)
     for i in range(p):
         f_orth += g_functions[i]* sampled_orth_vectors[i]  
-        
+    f_grad=sp.simplify(f_grad)
+    f_orth=sp.simplify(f_orth)    
     # 返回动力系统的最终方程
     dynamical_system=f_grad +f_orth
     dynamical_system=sp.simplify(dynamical_system)
@@ -223,13 +229,21 @@ def generate_dynamical_system(V, grad_V, orth_vectors):
 
 # 主函数：反向生成动力系统和李雅普诺夫函数
 def backward_generation(n_vars):
-    x = sp.symbols(f'x:{n_vars}')
-    V = generate_lyapunov_function(n_vars)
-    grad_V = compute_gradient(V, x)
-    random_vectors = generate_random_vectors(n_vars, n_vars-1)
-    orth_vectors = gram_schmidt_orthogonalization(grad_V, random_vectors)
-    f_system = generate_dynamical_system(V, grad_V, orth_vectors)
-    return V, f_system
+    try:
+        x = sp.symbols(f'x:{n_vars}')
+        logging.debug(f"Symbols for backward generation: {x}")
+        
+        V = generate_lyapunov_function(n_vars,x)
+        grad_V = compute_gradient(V, x)
+        random_vectors = generate_random_vectors(n_vars, n_vars-1,x)
+        orth_vectors = gram_schmidt_orthogonalization(grad_V, random_vectors)
+        f_system = generate_dynamical_system(V, grad_V, orth_vectors,x,n_vars)
+        
+        logging.info(f"Generated Lyapunov function and dynamical system successfully.")
+        return V, f_system
+    except Exception as e:
+        logging.error(f"Error in backward_generation: {e}")
+        raise
 def save_vectors_to_file(vectors, filename):
     """
     将生成的向量写入到txt文件中。
@@ -248,7 +262,6 @@ def save_functions_to_file(functions, filename):
         
         f.write(str(functions) + '\n')
     print(f"functions已保存至 {filename}")
-import sympy as sp
 
 def to_polish_notation(expr):
     """
@@ -263,9 +276,10 @@ def to_polish_notation(expr):
                 parts = []
                 while num >= 1000:
                     parts.append(num % 1000)  # 获取最后 3 位
+                    parts.append('t')
                     num //= 1000  # 去掉最后 3 位
                 parts.append(num)  # 最后一组（剩余的部分，可能少于 3 位）
-    
+
     # 返回结果时需要反转，因为我们是从右边开始划分的
                 parts=parts[::-1]
                 for part in parts:
@@ -277,6 +291,7 @@ def to_polish_notation(expr):
                 num=abs(num)
                 while num >= 1000:
                     parts.append(num % 1000)  # 获取最后 3 位
+                    parts.append('t')
                     num //= 1000  # 去掉最后 3 位
                 parts.append(num)  # 最后一组（剩余的部分，可能少于 3 位）
     
@@ -318,12 +333,12 @@ def to_polish_notation(expr):
                         a1=int(a1)
                         a2=abs(coeff)%1000
                         if a1<1000:
-                            result = ["-",a1,a2, "10^", "-", abs(exp)]
+                            result = ["-",a1,"t",a2, "10^", "-", abs(exp)]
                         else:
                             a3 = a1/1000
                             a3=int(a3)
                             a1=a1%1000
-                            result = ["-",a3,a1,a2, "10^", "-", abs(exp)]
+                            result = ["-",a3,'t',a1,'t',a2, "10^", "-", abs(exp)]
                 else:                   
                     if abs(coeff)<1000:
                         result = [coeff, "10^", "-", abs(exp)]
@@ -332,12 +347,12 @@ def to_polish_notation(expr):
                         a1=int(a1)
                         a2=abs(coeff)%1000
                         if a1<1000:
-                            result = [a1,a2, "10^", "-", abs(exp)]
+                            result = [a1,'t',a2, "10^", "-", abs(exp)]
                         else:
                             a3 = a1/1000
                             a3=int(a3)
                             a1=a1%1000
-                            result = [a3,a1,a2, "10^", "-", abs(exp)]                    
+                            result = [a3,'t',a1,'t',a2, "10^", "-", abs(exp)]                    
 
             else:
                 if coeff < 0:
@@ -348,12 +363,12 @@ def to_polish_notation(expr):
                         a1=int(a1)
                         a2=abs(coeff)%1000
                         if a1<1000:  
-                            result = ["-",a1,a2, "10^", exp]
+                            result = ["-",a1,'t',a2, "10^", exp]
                         else:
                             a3 = a1/1000
                             a3=int(a3)
                             a1=a1%1000
-                            result = ["-",a3,a1,a2, "10^", exp]
+                            result = ["-",a3,'t',a1,'t',a2, "10^", exp]
                 else:
                     if abs(coeff)<1000:
                         result = [coeff, "10^", exp]
@@ -362,12 +377,12 @@ def to_polish_notation(expr):
                         a1=int(a1)
                         a2=abs(coeff)%1000
                         if a1<1000:
-                            result = [a1,a2, "10^", exp]
+                            result = [a1,'t',a2, "10^", exp]
                         else:
                             a3 = a1/1000
                             a3=int(a3)
                             a1=a1%1000
-                            result = [a3,a1,a2, "10^", exp]
+                            result = [a3,'t',a1,'t',a2, "10^", exp]
     
     # 处理其他情况
     elif expr == sp.E:
@@ -379,15 +394,17 @@ def to_polish_notation(expr):
     elif expr.is_Symbol:
         result.append(str(expr))
     elif isinstance(expr, sp.Mul):
-        # 如果是乘法，添加 '*'，然后递归处理乘数
+            # 如果是乘法，添加 '*'，然后递归处理乘数
         result.append('*')
-        for arg in expr.args:
-            result.extend(to_polish_notation(arg))
+        result.extend(to_polish_notation(expr.args[0]))
+        remaining_sum = sp.Mul(*expr.args[1:])
+        result.extend(to_polish_notation(remaining_sum))
     elif isinstance(expr, sp.Add):
         # 如果是加法，添加 '+'，然后递归处理加数
         result.append('+')
-        for arg in expr.args:
-            result.extend(to_polish_notation(arg))
+        result.extend(to_polish_notation(expr.args[0]))
+        remaining_sum = sp.Add(*expr.args[1:])
+        result.extend(to_polish_notation(remaining_sum))
     elif isinstance(expr, sp.Pow):
         # 如果是幂运算，添加 '**'，然后递归处理底数和指数
         result.append('**')
@@ -422,46 +439,48 @@ def save_dynamical_system_as_polish(dynamical_system, filename):
     print(f"动力系统已以Polish表示法保存至 {filename}")
 
 
-lyapunov_buffer = []
-dynamical_system_buffer = []
+if __name__ == "__main__":
+    # 你希望仅在直接运行 Bpoly3 时才执行的代码
+    lyapunov_buffer = []
+    dynamical_system_buffer = []
 
-for j in range(1000):
-    for i in range(1000):
-        n_vars = random.randint(2, 3)  # 在 2 到 5 之间生成随机整数
-        x = sp.symbols(f'x:{n_vars}')
-        V, f_system = backward_generation(n_vars)  # 使用随机生成的 n_vars
+    for j in range(1000):
+        for i in range(1000):
+            n_vars = 2  # 在 2 到 5 之间生成随机整数
+            x = sp.symbols(f'x:{n_vars}')
+            V, f_system = backward_generation(n_vars)  # 使用随机生成的 n_vars
 
-        # 生成李雅普诺夫函数的 Polish 表示法
-        polish = to_polish_notation(V)
-        polish_str = [str(item) for item in polish]
-        lyapunov_buffer.append("[" + ", ".join(polish_str) + ", ]\n")
-
-        # 生成动力系统的 Polish 表示法
-        dynamical_str = "["
-        for eq in f_system:
-            polish = to_polish_notation(eq)
+            # 生成李雅普诺夫函数的 Polish 表示法
+            polish = to_polish_notation(V)
             polish_str = [str(item) for item in polish]
-            dynamical_str += ", ".join(polish_str) + ", " + " SEP" + ", "
-        dynamical_str += "]\n"
-        dynamical_system_buffer.append(dynamical_str)
+            lyapunov_buffer.append("[" + ", ".join(polish_str) + ", ]\n")
 
-        # 每 100 次写入一次文件
-        if (i + 1) % 5 == 0:
-            with open("lyapunov_function_polish_poly.txt", 'a') as f:
-                f.writelines(lyapunov_buffer)
-            with open("dynamical_system_polish_poly.txt", 'a') as f:
-                f.writelines(dynamical_system_buffer)
-            
-            # 清空缓冲区
-            lyapunov_buffer = []
-            dynamical_system_buffer = []
+            # 生成动力系统的 Polish 表示法
+            dynamical_str = "["
+            for eq in f_system:
+                polish = to_polish_notation(eq)
+                polish_str = [str(item) for item in polish]
+                dynamical_str += ", ".join(polish_str) + ", " + " SEP" + ", "
+            dynamical_str += "]\n"
+            dynamical_system_buffer.append(dynamical_str)
 
-        print(f"Iteration {1000*j+i+1} saved, n_vars = {n_vars}")
+            # 每 100 次写入一次文件
+            if (i + 1) % 5 == 0:
+                with open("lyapunov_function_polish_poly4.txt", 'a') as f:
+                    f.writelines(lyapunov_buffer)
+                with open("dynamical_system_polish4.txt", 'a') as f:
+                    f.writelines(dynamical_system_buffer)
+                
+                # 清空缓冲区
+                lyapunov_buffer = []
+                dynamical_system_buffer = []
 
-# 在所有循环结束后，将剩余的数据写入文件
-if lyapunov_buffer:
-    with open("lyapunov_function_polish_poly.txt", 'a') as f:
-        f.writelines(lyapunov_buffer)
-if dynamical_system_buffer:
-    with open("dynamical_system_polish_poly.txt", 'a') as f:
-        f.writelines(dynamical_system_buffer)
+            print(f"Iteration {1000*j+i+1} saved, n_vars = {n_vars}")
+
+    # 在所有循环结束后，将剩余的数据写入文件
+    if lyapunov_buffer:
+        with open("lyapunov_function_polish_poly4.txt", 'a') as f:
+            f.writelines(lyapunov_buffer)
+    if dynamical_system_buffer:
+        with open("dynamical_system_polish4.txt", 'a') as f:
+            f.writelines(dynamical_system_buffer)
